@@ -9,6 +9,7 @@ from collections import defaultdict
 import torch
 from torch.utils.data.dataloader import DataLoader
 from mingpt.utils import CfgNode as CN
+import numpy as np
 
 class Trainer:
 
@@ -26,13 +27,35 @@ class Trainer:
         C.betas = (0.9, 0.95)
         C.weight_decay = 0.1 # only applied on matmul weights
         C.grad_norm_clip = 1.0
+        C.val_split = 0.01
+        
         return C
 
-    def __init__(self, config, model, train_dataset):
+    def __init__(self, config, model, train_dataset, val_dataset=None):
         self.config = config
         self.model = model
         self.optimizer = None
-        self.train_dataset = train_dataset
+
+        #dataset splitting happens here because I don't want to mess with the cod
+        self.train_loader = DataLoader(
+            train_dataset,
+            sampler=torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10)),
+            shuffle=False,
+            pin_memory=True,
+            batch_size=config.batch_size,
+            num_workers=config.num_workers,
+        )
+
+        self.val_loader = None
+        if val_dataset is not None:
+            self.val_loader = DataLoader(
+                val_dataset,
+                shuffle=False,
+                pin_memory=True,
+                batch_size=config.batch_size,
+                num_workers=config.num_workers,
+            )
+
         self.callbacks = defaultdict(list)
 
         # determine the device we'll train on
@@ -58,21 +81,35 @@ class Trainer:
         for callback in self.callbacks.get(onevent, []):
             callback(self)
 
-    def run(self):
+    def validate(self):
+        """
+        Calculates validation loss
+        """
+        assert self.val_loader is not None, "must pass a validation dataset to compute validation loss"
+
         model, config = self.model, self.config
+        
+        # calculate the mean loss over the validation dataset
+        model.eval()
+        total_loss = 0.0
+        total_count = 0
+        with torch.no_grad():
+            for x, y in self.val_loader:
+                x, y = x.to(self.device), y.to(self.device)
+                logits, loss = model(x, y)
+                total_loss += loss.item() * x.shape[0]
+                total_count += x.shape[0]
+        mean_loss = total_loss / total_count
+        self.val_loss = mean_loss
+        model.train()
+
+        return mean_loss
+
+    def run(self):
+        model, config, train_loader = self.model, self.config, self.train_loader
 
         # setup the optimizer
         self.optimizer = model.configure_optimizers(config)
-
-        # setup the dataloader
-        train_loader = DataLoader(
-            self.train_dataset,
-            sampler=torch.utils.data.RandomSampler(self.train_dataset, replacement=True, num_samples=int(1e10)),
-            shuffle=False,
-            pin_memory=True,
-            batch_size=config.batch_size,
-            num_workers=config.num_workers,
-        )
 
         model.train()
         self.iter_num = 0

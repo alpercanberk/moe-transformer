@@ -120,8 +120,9 @@ class GPT(nn.Module):
 
         type_given = config.model_type is not None
         params_given = all([config.n_layer is not None, config.n_head is not None, config.n_embd is not None])
-        assert type_given ^ params_given # exactly one of these (XOR)
-        if type_given:
+        assert type_given or params_given 
+        #params override type
+        if not params_given and type_given:
             # translate from model_type to detailed configuration
             config.merge_from_dict({
                 # names follow the huggingface naming conventions

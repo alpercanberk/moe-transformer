@@ -278,7 +278,6 @@ class BPETokenizer:
         text = self.encoder.decode(idx.tolist())
         return text
 
-
 if __name__ == '__main__':
 
     # here is an encoding example
